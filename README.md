@@ -157,10 +157,11 @@ The script connects to the IMU sensor, extracts features in real-time, and print
 - **Gestures**: Add new gestures by collecting data and retraining the model.
 - **Features**: Modify `compute_features()` in `live_predictor.py` and `features_from_csv()` in `step01.py`.
 - **Model**: Experiment with different classifiers in `forest.py`.
-- **Windowing**: Adjust `WIN` and `HOP` for different temporal resolutions *not suggested, as 
+- **Windowing**: Adjust `WIN` and `HOP` for different temporal resolutions *not suggested as documented in code
 
 ## Troubleshooting
 
 - **No serial data**: Ensure the board is connected, firmware is running, and baud rate matches (115200).
 - **Low accuracy**: Collect more data, adjust DBSCAN parameters, or tune the model.
 - **Port issues**: Use `--show-ports` to list available ports.
+
