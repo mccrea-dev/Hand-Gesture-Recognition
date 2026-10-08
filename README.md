@@ -5,7 +5,7 @@
 This project implements a real-time hand gesture recognition system using Seeed Studio IMU sensors (accelerometer and gyroscope). It collects sensor data for various hand gestures, extracts statistical features via sliding windows, trains a machine learning model using Random Forest, and performs live prediction via serial connection.
 
 **Supported Gestures:**
-- **Petting**: Hand near the floor slowly stroking right to left as if petting a cat.
+- **Petting**: Hand near the floor slowly petting left to right as if petting a cat.
 - **Waving**: Normal waving, moving hand left to right with a 90° angle in the elbow.
 - **Raise the Roof**: Hands above your head pumping up and down repeatedly.
 - **Rotate Wrist**: Turning your hand from palm down to palm up or vice versa.
@@ -37,10 +37,10 @@ Collect training data for each gesture using `mlogger.py`. Perform each gesture 
 
 ```bash
 # List available ports
-python mlogger.py --show-ports
+python src/mlogger.py --show-ports
 
 # Log data for a gesture (e.g., petting)
-python mlogger.py --port COM5 --out petting1.csv --duration 10
+python src/mlogger.py --port COM5 --out data/raw/petting/petting_01.csv --duration 10
 
 # Repeat for other gestures: waving1.csv, raise_roof1.csv, etc.
 ```
@@ -55,7 +55,7 @@ Process the collected CSV files to extract features using sliding windows.
 
 ```bash
 # Process all CSV files in the directory
-python step01.py *.csv
+python src/step01.py data/raw
 ```
 
 This generates:
@@ -73,7 +73,7 @@ This generates:
 Use DBSCAN to cluster the features and filter for high-activity windows (top 30% per gesture).
 
 ```bash
-python dbscan.py
+python analysis/dbscan.py
 ```
 
 This outputs:
@@ -90,7 +90,7 @@ This outputs:
 Train a Random Forest classifier on the filtered features.
 
 ```bash
-python forest.py
+python src/forest.py
 ```
 
 This saves `gesture_model.pkl` (the trained model).
@@ -103,13 +103,13 @@ This saves `gesture_model.pkl` (the trained model).
 
 #### PCA Visualization
 ```bash
-python pca.py
+python analysis/pca.py
 ```
 Shows 2D and 3D PCA plots of the features, colored by gesture.
 
 #### Decision Boundary
 ```bash
-python decision_boundary.py
+python analysis/decision_boundary.py
 ```
 Displays decision boundaries on the PCA 2D projection.
 
@@ -119,13 +119,13 @@ Perform real-time gesture recognition.
 
 ```bash
 # Auto-detect port
-python live_predictor.py
+python src/live_predictor.py
 
 # Specify port
-python live_predictor.py --port COM5
+python src/live_predictor.py --port COM5
 
 # Show available ports
-python live_predictor.py --show-ports
+python src/live_predictor.py --show-ports
 ```
 
 - `--port`: Serial port.
