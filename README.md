@@ -2,166 +2,180 @@
 
 ## Description
 
-This project implements a real-time hand gesture recognition system using Seeed Studio IMU sensors (accelerometer and gyroscope). It collects sensor data for various hand gestures, extracts statistical features via sliding windows, trains a machine learning model using Random Forest, and performs live prediction via serial connection.
+This project implements a real-time hand gesture recognition system using a Seeed Studio IMU sensor (accelerometer and gyroscope). It collects sensor data for various hand gestures, extracts statistical features via sliding windows, trains a Random Forest classifier, and performs live prediction over a serial connection.
 
-**Supported Gestures:**
-- **Petting**: Hand near the floor slowly petting left to right as if petting a cat.
-- **Waving**: Normal waving, moving hand left to right with a 90° angle in the elbow.
-- **Raise the Roof**: Hands above your head pumping up and down repeatedly.
-- **Rotate Wrist**: Turning your hand from palm down to palm up or vice versa.
-- **Stationary**: Holding your hand still.
+**Supported Gestures** (with the label the model outputs):
 
-The system uses a sliding window approach (250ms windows with 50% overlap at 100Hz sampling) to extract features like mean, standard deviation, RMS, peak-to-peak, and activity level from IMU data.
+| Gesture | Label | Description |
+|---|---|---|
+| Petting | `petting` | Hand near the floor slowly petting left to right as if petting a cat. |
+| Waving | `waving` | Normal waving, moving hand left to right with a 90° angle in the elbow. |
+| Raise the Roof | `raise` | Hands above your head pumping up and down repeatedly. |
+| Rotate Wrist | `rotate` | Turning your hand from palm down to palm up or vice versa. |
+| Stationary | `stationary` | Holding your hand still. |
+
+The system uses a sliding window approach (250 ms windows with 50% overlap at 100 Hz sampling) to extract features like mean, standard deviation, RMS, RMS of the first difference, peak-to-peak, and an overall activity level from the IMU data.
+
+## Repository Layout
+
+```
+Hand-Gesture-Recognition/
+├── src/                        # Core pipeline
+│   ├── mlogger.py              # Log IMU data from the serial port to CSV
+│   ├── step01.py               # Sliding-window feature extraction
+│   ├── forest.py               # Random Forest training
+│   └── live_predictor.py       # Real-time gesture prediction
+├── analysis/                   # Exploration and visualization
+│   ├── dbscan.py               # Activity filtering + DBSCAN clustering
+│   ├── pca.py                  # 2D/3D PCA plots
+│   └── decision_boundary.py    # Decision boundaries on PCA projection
+├── data/
+│   ├── raw/<gesture>/          # Raw IMU recordings, one folder per gesture
+│   ├── interim/features/       # Per-recording feature CSVs
+│   └── processed/              # features_all.csv, features_top_activity.csv,
+│                               # training_clean.csv, features_schema.json
+└── models/
+    └── gesture_model.pkl       # Trained model
+```
+
+`data/raw/` also contains recordings that were **not** used to train the current model (`adjusting_hair`, `punching`, `running`, `wave_dance`, `petting1-4`, `stationary_1-5`). The current model was trained on `petting_redone2-5`, `raise_roof1-4`, `rotate_wrist1-5`, `stationary_6-8`, and `waving_1-4`.
 
 ## Requirements
 
 - Python 3.x
 - Libraries: `numpy`, `pandas`, `scikit-learn`, `joblib`, `matplotlib`, `pyserial`
 
-Install dependencies:
 ```bash
 pip install numpy pandas scikit-learn joblib matplotlib pyserial
 ```
 
 ## Hardware Setup
 
-- **IMU Sensor**: Seeed Studio board with built-in IMU (e.g., XIAO nRF52840 Sense with BMI088 IMU).
+- **IMU Sensor**: Seeed Studio board with built-in IMU (e.g., XIAO nRF52840 Sense).
 - **Connection**: USB serial at 115200 baud.
 - **Firmware**: The board should output CSV-formatted IMU data: `timestamp_ms,ax,ay,az,gx,gy,gz[,tempC]`.
 
-## Project Workflow
+## Quick Start (Pretrained Model)
+
+The trained model is already in `models/`. Plug in the board and run the predictor **from the `models/` directory** (it loads `gesture_model.pkl` from the current directory):
+
+```bash
+cd models
+python ../src/live_predictor.py              # auto-detect port
+python ../src/live_predictor.py --port COM5  # or specify a port
+```
+
+## Working Directories
+
+The scripts read and write their files relative to the **current working directory**, not the repo layout. The commands below are written to run from the directory where each file lives:
+
+| Script | Reads | Writes | Run from |
+|---|---|---|---|
+| `src/step01.py` | CSVs passed as arguments | `features_all.csv`, `features_schema.json`, `features/` | `data/processed` |
+| `analysis/dbscan.py` | `features_all.csv` | `features_top_activity.csv`, `training_clean.csv` | `data/processed` |
+| `analysis/pca.py` | `features_all.csv` | plots only | `data/processed` |
+| `analysis/decision_boundary.py` | `features_top_activity.csv` | plots only | `data/processed` |
+| `src/forest.py` | `features_top_activity.csv` | `gesture_model.pkl` | `data/processed` (then move model to `models/`) |
+| `src/live_predictor.py` | `gesture_model.pkl` | — | `models` |
+
+## Training Workflow
 
 ### 1. Data Collection
 
-Collect training data for each gesture using `mlogger.py`. Perform each gesture multiple times and save to separate CSV files.
+Record each gesture several times with `mlogger.py`, one CSV per recording.
 
 ```bash
 # List available ports
 python src/mlogger.py --show-ports
 
-# Log data for a gesture (e.g., petting)
+# Record 10 seconds of a gesture
 python src/mlogger.py --port COM5 --out data/raw/petting/petting_01.csv --duration 10
-
-# Repeat for other gestures: waving1.csv, raise_roof1.csv, etc.
 ```
 
-- `--port`: Serial port (e.g., COM5 on Windows, /dev/ttyACM0 on Linux).
-- `--duration`: Recording time in seconds.
-- `--out`: Output CSV filename.
+- `--port`, `-p`: Serial port (e.g., `COM5` on Windows, `/dev/ttyACM0` on Linux). Auto-detected if omitted.
+- `--out`, `-o`: Output CSV path (default: `imu_session_YYYYmmdd_HHMMSS.csv`).
+- `--duration`: Recording time in seconds (default: until Ctrl-C).
+- `--append`: Append to the output file if it exists.
+- `--baud`, `-b`, `--no-auto`, `--quiet`: Same as the live predictor.
+
+> **File naming matters:** the gesture label is taken from the filename up to the first `_` (e.g., `raise_roof3.csv` → `raise`, `petting_redone2.csv` → `petting`). Name recordings `<label>_<anything>.csv`.
 
 ### 2. Feature Extraction
 
-Process the collected CSV files to extract features using sliding windows.
+Pass the recordings you want to train on to `step01.py` (it takes CSV files, not directories):
 
 ```bash
-# Process all CSV files in the directory
-python src/step01.py data/raw
+cd data/processed
+python ../../src/step01.py ../raw/petting/petting_redone*.csv ../raw/raise_roof/*.csv \
+    ../raw/rotate_wrist/*.csv ../raw/stationary/stationary_[678].csv ../raw/waving/*.csv
 ```
 
-This generates:
-- `features_all.csv`: All extracted features.
-- `features_schema.json`: Feature column schema.
-- `features/` directory: Individual feature CSVs.
+(This uses bash wildcards and line continuation. PowerShell and cmd don't expand `*.csv` for Python, so use Git Bash or list the files explicitly.)
 
-**Constants** (adjust in `step01.py` if needed):
-- `WIN = 25`: Window size (25 samples at 100Hz = 250ms).
+This generates `features_all.csv`, `features_schema.json`, and a `features/` directory of per-recording feature CSVs (the copy kept in the repo is in `data/interim/features/`).
+
+**Constants** (in `step01.py`):
+- `WIN = 25`: Window size (25 samples at 100 Hz = 250 ms).
 - `HOP = 12`: Hop size (50% overlap).
 - `AXES = ["ax","ay","az","gx","gy","gz"]`: IMU axes.
 
-### 3. Clustering and Filtering
+### 3. Activity Filtering and Clustering
 
-Use DBSCAN to cluster the features and filter for high-activity windows (top 30% per gesture).
+Keep the top 30% highest-activity windows per gesture, then run DBSCAN on them:
 
 ```bash
-python analysis/dbscan.py
+python ../../analysis/dbscan.py
 ```
 
-This outputs:
-- `features_top_activity.csv`: Filtered features for training.
-- `training_clean.csv`: Features with DBSCAN labels.
-- PCA plot showing clusters.
+Outputs:
+- `features_top_activity.csv`: Filtered features used for training.
+- `training_clean.csv`: Filtered features with a `dbscan_label` column.
+- A PCA plot of the clusters.
 
-**Parameters** (adjust in `dbscan.py`):
-- `EPS = 1.6`: DBSCAN epsilon.
-- `MINPTS = 25`: Minimum samples per cluster.
+**Parameters** (in `dbscan.py`): `EPS = 1.6`, `MINPTS = 25`, `TOP_PERCENT = 0.30`.
 
 ### 4. Model Training
 
-Train a Random Forest classifier on the filtered features.
-
 ```bash
-python src/forest.py
+python ../../src/forest.py
+mv gesture_model.pkl ../../models/
 ```
 
-This saves `gesture_model.pkl` (the trained model).
+**Model parameters** (in `forest.py`): `n_estimators=300`, `max_features="sqrt"`, `random_state=42`.
 
-**Model Parameters** (in `forest.py`):
-- `n_estimators=300`
-- `max_features="sqrt"`
+### 5. Visualization (optional)
 
-### 5. Visualization
-
-#### PCA Visualization
 ```bash
-python analysis/pca.py
+python ../../analysis/pca.py                # 2D and 3D PCA plots colored by gesture
+python ../../analysis/decision_boundary.py  # decision boundaries on the 2D PCA projection
 ```
-Shows 2D and 3D PCA plots of the features, colored by gesture.
-
-#### Decision Boundary
-```bash
-python analysis/decision_boundary.py
-```
-Displays decision boundaries on the PCA 2D projection.
 
 ### 6. Live Prediction
 
-Perform real-time gesture recognition.
-
 ```bash
-# Auto-detect port
-python src/live_predictor.py
-
-# Specify port
-python src/live_predictor.py --port COM5
-
-# Show available ports
-python src/live_predictor.py --show-ports
+cd ../../models
+python ../src/live_predictor.py --port COM5
 ```
 
-- `--port`: Serial port.
-- `--baud`: Baud rate (default 115200).
-- `--duration`: Run for N seconds.
-- `--quiet`: Less output.
+- `--port`, `-p`: Serial port (auto-detected if omitted).
+- `--baud`, `-b`: Baud rate (default 115200).
+- `--duration`: Stop after N seconds (default: until Ctrl-C).
+- `--no-auto`: Don't auto-pick a port; require `--port`.
+- `--show-ports`: List available ports and exit.
+- `--quiet`, `-q`: Less output.
 
-The script connects to the IMU sensor, extracts features in real-time, and prints predicted gestures.
-
-## File Structure
-
-- `live_predictor.py`: Real-time gesture predictor.
-- `mlogger.py`: IMU data logger from serial port.
-- `step01.py`: Feature extraction from CSV data.
-- `dbscan.py`: DBSCAN clustering and activity filtering.
-- `forest.py`: Random Forest model training.
-- `pca.py`: PCA visualization.
-- `decision_boundary.py`: Decision boundary plot on PCA.
-- `features_all.csv`: All extracted features.
-- `features_top_activity.csv`: Filtered high-activity features.
-- `training_clean.csv`: Training data with cluster labels.
-- `gesture_model.pkl`: Trained model.
-- `features_schema.json`: Feature schema.
-- `features/`: Directory with per-file features.
-- Various gesture CSV directories: `petting/`, `waving/`, etc.
+The predictor buffers incoming samples, computes features for each 25-sample window, and prints the predicted gesture every 12 samples.
 
 ## Customization
 
-- **Gestures**: Add new gestures by collecting data and retraining the model.
-- **Features**: Modify `compute_features()` in `live_predictor.py` and `features_from_csv()` in `step01.py`.
+- **Gestures**: Record a new gesture following the naming convention above, re-run steps 2–4, and include its files in the `step01.py` command.
+- **Features**: Keep `compute_features()` in `live_predictor.py` and `features_from_csv()` in `step01.py` in sync. The live feature order must match the training column order.
 - **Model**: Experiment with different classifiers in `forest.py`.
-- **Windowing**: Adjust `WIN` and `HOP` for different temporal resolutions *not suggested as documented in code
+- **Windowing**: `WIN` and `HOP` can be changed in `step01.py` (the live predictor imports them), but this isn't recommended. The model must be retrained after any change.
 
 ## Troubleshooting
 
-- **No serial data**: Ensure the board is connected, firmware is running, and baud rate matches (115200).
-- **Low accuracy**: Collect more data, adjust DBSCAN parameters, or tune the model.
+- **No serial data**: Make sure the board is connected, the firmware is running, the baud rate is 115200, and no other program (e.g., Arduino Serial Monitor) has the port open.
+- **`FileNotFoundError` for a CSV or `gesture_model.pkl`**: You're running from the wrong directory. See [Working Directories](#working-directories).
+- **Low accuracy**: Collect more data, adjust `TOP_PERCENT` or the DBSCAN parameters, or tune the model.
 - **Port issues**: Use `--show-ports` to list available ports.
-
